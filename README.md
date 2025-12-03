@@ -2,6 +2,8 @@
 
 Interactive heart rate analysis for `.fit` files with error-aware calorie estimates.
 
+![Full GUI overview with plot, profile panel, and stats.](docs/entire.png)
+
 This tool reads HR data from fitness devices, smooths noise, estimates calories with an explicit HR-to-kcal model, and propagates realistic HR uncertainty into a 1σ calorie error band.
 
 ---
@@ -74,37 +76,10 @@ This gives a data-driven smoothing choice plus a local HR noise estimate for unc
 
 Zones are constructed in `build_zones_from_config(zones_cfg, hr_rest, hr_max)`.
 
-You can define zones in `profile.yaml` in two ways.
+zone axis alongside the primary stats box.
 
-1. **Absolute bpm**
-
-   ```yaml
-   zones:
-     - {name: Z1, low_bpm: 110, high_bpm: 130}
-     - {name: Z2, low_bpm: 130, high_bpm: 150}
-   ```
-
-2. **Heart rate reserve (HRR) fractions** using `hr_rest` and `hr_max`:
-
-   ```yaml
-   hr_rest: 55
-   hr_max: 190
-   zones:
-     - {name: Z1, low_pct: 0.50, high_pct: 0.60}
-     - {name: Z2, low_pct: 0.60, high_pct: 0.70}
-   ```
-
-If `zones` is omitted but `hr_rest` and `hr_max` are given, a default 5 zone HRR scheme is built automatically.
-
-### Calorie estimation and uncertainty
-
-
-The screenshot highlights the raw and smoothed HR traces, the 1σ uncertainty band, colored zone backgrounds, and the right-hand
- zone axis alongside the primary stats box.
-The cropped panel view shows editable fields (age, weight, `hr_rest`, `hr_max`, `hr_error_bpm`), any model toggles, and the
- Apply/Reset buttons, illustrating how live edits update the plot and calorie summary.
+A zoomed view shows the colored zone shading and hover tooltips for precise inspection.
 ![Figure 3: Zoomed zone labels and hover details.](docs/fig3_zoom_zones.png)
-
 Add a screenshot similar to:
 
 ```markdown
