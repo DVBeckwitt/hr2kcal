@@ -20,12 +20,17 @@ import statistics as stats
 import tkinter as tk
 from tkinter import filedialog
 import sys
+import os
+from time import perf_counter
 
 import numpy as np
 import fitparse
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector, Button, TextBox, CheckButtons
 import yaml
+
+# Exit code used to signal the launcher that the window requested a forced quit.
+FORCED_EXIT_CODE = 99
 
 
 # ---------------------------------------------------------------------
@@ -1020,39 +1025,20 @@ def plot_interactive(
     )
     annot.set_visible(False)
 
+    hover_texts = [
+        f"{m:.2f} min\n{h:.0f} ± {s:.1f} bpm"
+        for m, h, s in zip(minutes_arr, smoothed, sigma)
+    ]
+
     def update_annotation(idx):
         x = minutes_arr[idx]
         y = smoothed[idx]
-        s = sigma[idx]
         vline.set_xdata([x, x])
         annot.xy = (x, y)
-        annot.set_text(f"{x:.2f} min\n{y:.0f} ± {s:.1f} bpm")
+        annot.set_text(hover_texts[idx])
         annot.set_visible(True)
 
     last_hover_idx: Optional[int] = None
-
-    def on_move(event):
-        nonlocal last_hover_idx
-        if event.inaxes is not ax:
-            if annot.get_visible():
-                annot.set_visible(False)
-                fig.canvas.draw_idle()
-            last_hover_idx = None
-            return
-
-        x = event.xdata
-        if x is None:
-            return
-
-        idx = find_nearest_index(x, minutes_arr)
-        if last_hover_idx == idx and annot.get_visible():
-            return
-
-        last_hover_idx = idx
-        update_annotation(idx)
-        fig.canvas.draw_idle()
-
-    fig.canvas.mpl_connect("motion_notify_event", on_move)
 
     # Left drag zoom (rectangle)
     def on_select(eclick, erelease):
@@ -1162,7 +1148,10 @@ def plot_interactive(
 
     def on_close(event):
         plt.close("all")
-        sys.exit(0)
+        try:
+            sys.exit(FORCED_EXIT_CODE)
+        finally:
+            os._exit(FORCED_EXIT_CODE)
 
     fig.canvas.mpl_connect("close_event", on_close)
 
@@ -1434,6 +1423,7 @@ def plot_interactive(
         zorder=10,
     )
     active_tip_ax: Optional[Any] = None
+    last_redraw_time = 0.0
 
     def update_tooltip_position(event):
         fig_x, fig_y = fig.transFigure.inverted().transform((event.x, event.y))
@@ -1441,48 +1431,58 @@ def plot_interactive(
         fig_y = min(max(fig_y + 0.01, 0.0), 0.98)
         tooltip.set_position((fig_x, fig_y))
 
-    def show_tooltip(ax_obj, event):
-        message = tooltip_texts.get(ax_obj)
-        if message is None:
-            return
+    def resolve_axes_under_cursor(event):
+        if event.inaxes is not None:
+            return event.inaxes
         if event.x is None or event.y is None:
-            return
-        update_tooltip_position(event)
-        tooltip.set_text(message)
-        tooltip.set_visible(True)
+            return None
+        for ax_obj in tooltip_texts:
+            bbox = getattr(ax_obj, "bbox", None)
+            if bbox is not None and bbox.contains(event.x, event.y):
+                return ax_obj
+        return None
 
     def on_motion(event):
-        nonlocal active_tip_ax
-        ax_under = event.inaxes
-        if ax_under in tooltip_texts:
-            if event.x is None or event.y is None:
-                return
-            active_tip_ax = ax_under
-            show_tooltip(ax_under, event)
-            fig.canvas.draw_idle()
+        nonlocal active_tip_ax, last_hover_idx, last_redraw_time
+
+        hover_changed = False
+        tooltip_changed = False
+
+        # Hover over main plot
+        if event.inaxes is ax and event.xdata is not None:
+            idx = find_nearest_index(event.xdata, minutes_arr)
+            if idx != last_hover_idx or not annot.get_visible():
+                last_hover_idx = idx
+                update_annotation(idx)
+                hover_changed = True
+        else:
+            if annot.get_visible():
+                annot.set_visible(False)
+                hover_changed = True
+            last_hover_idx = None
+
+        # Tooltip handling for controls
+        ax_under = resolve_axes_under_cursor(event)
+        if ax_under in tooltip_texts and event.x is not None and event.y is not None:
+            if active_tip_ax != ax_under or not tooltip.get_visible():
+                tooltip.set_text(tooltip_texts[ax_under])
+                tooltip.set_visible(True)
+                active_tip_ax = ax_under
+                tooltip_changed = True
+            update_tooltip_position(event)
+            tooltip_changed = True
         elif active_tip_ax is not None:
             tooltip.set_visible(False)
             active_tip_ax = None
-            fig.canvas.draw_idle()
+            tooltip_changed = True
 
-    def on_axes_enter(event):
-        nonlocal active_tip_ax
-        ax_under = event.inaxes
-        if ax_under in tooltip_texts and event.x is not None and event.y is not None:
-            active_tip_ax = ax_under
-            show_tooltip(ax_under, event)
-            fig.canvas.draw_idle()
-
-    def on_axes_leave(event):
-        nonlocal active_tip_ax
-        if active_tip_ax is not None:
-            tooltip.set_visible(False)
-            active_tip_ax = None
-            fig.canvas.draw_idle()
+        if hover_changed or tooltip_changed:
+            now = perf_counter()
+            if now - last_redraw_time >= 1 / 120.0:
+                fig.canvas.draw_idle()
+                last_redraw_time = now
 
     fig.canvas.mpl_connect("motion_notify_event", on_motion)
-    fig.canvas.mpl_connect("axes_enter_event", on_axes_enter)
-    fig.canvas.mpl_connect("axes_leave_event", on_axes_leave)
 
     plt.show()
 
