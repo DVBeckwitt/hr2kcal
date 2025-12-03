@@ -1,0 +1,35 @@
+name: David
+sex: M
+age: 32
+weight: 190
+weight_unit: lb
+hr_rest: 60
+hr_max: 190
+hr_error_bpm: 4.0
+
+smoothing:
+  target_durations_min: [0.1, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
+
+calories:
+  model_frac: 0.2
+  include_model_uncertainty: true
+
+script:
+  recent_fit_files: 5
+
+zones:
+  - name: Z1
+    low_pct: 0.50
+    high_pct: 0.60
+  - name: Z2
+    low_pct: 0.60
+    high_pct: 0.70
+  - name: Z3
+    low_pct: 0.70
+    high_pct: 0.80
+  - name: Z4
+    low_pct: 0.80
+    high_pct: 0.90
+  - name: Z5
+    low_pct: 0.90
+    high_pct: 1.00

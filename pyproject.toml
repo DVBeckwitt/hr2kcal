@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hr-energy-lab"
+version = "0.1.0"
+description = "Research-grade heart rate to energy expenditure toolkit"
+readme = "README.md"
+authors = [{name = "David Beckwitt"}]
+license = {file = "LICENSE"}
+requires-python = ">=3.9"
+dependencies = [
+    "fitparse>=1.2.0",
+    "matplotlib>=3.5",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+hr-energy-lab = "hr_energy_lab.hr_interactive:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
