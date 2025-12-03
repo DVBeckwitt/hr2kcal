@@ -835,35 +835,76 @@ def plot_interactive(
     # Dynamic zone labels on the right side (outside), updated on zoom
     zone_line_artists: List[Any] = []
     zone_text_artists: List[Any] = []
+    zone_stats_version = 0
+    last_zone_stats_version = -1
+    last_ylim: Optional[Tuple[float, float]] = None
 
-    def update_zone_labels():
-        nonlocal zone_line_artists, zone_text_artists
+    def ensure_zone_artists(count: int):
+        while len(zone_line_artists) < count:
+            line = ax.plot(
+                [1.0, 1.02],
+                [0.0, 0.0],
+                transform=ax.transAxes,
+                linestyle="--",
+                linewidth=0.8,
+                color="k",
+                zorder=5,
+                clip_on=False,
+            )[0]
+            text = ax.text(
+                1.03,
+                0.0,
+                "",
+                transform=ax.transAxes,
+                ha="left",
+                va="center",
+                fontsize=8,
+                zorder=5,
+                clip_on=False,
+            )
+            zone_line_artists.append(line)
+            zone_text_artists.append(text)
 
-        # Remove existing artists
-        for art in zone_line_artists + zone_text_artists:
-            try:
-                art.remove()
-            except ValueError:
-                pass
-        zone_line_artists = []
-        zone_text_artists = []
+        while len(zone_line_artists) > count:
+            zone_line_artists.pop().remove()
+            zone_text_artists.pop().remove()
+
+    def update_zone_labels(force: bool = False):
+        nonlocal last_zone_stats_version, last_ylim
 
         if not zone_stats_current:
+            for line, text in zip(zone_line_artists, zone_text_artists):
+                line.set_visible(False)
+                text.set_visible(False)
             fig.canvas.draw_idle()
             return
 
         y_min, y_max = ax.get_ylim()
+        if (
+            not force
+            and last_ylim is not None
+            and last_ylim == (y_min, y_max)
+            and last_zone_stats_version == zone_stats_version
+        ):
+            return
+
+        last_ylim = (y_min, y_max)
+        last_zone_stats_version = zone_stats_version
+
         span = max(y_max - y_min, 1e-6)
 
-        for zstat in zone_stats_current:
+        ensure_zone_artists(len(zone_stats_current))
+
+        for line, text, zstat in zip(zone_line_artists, zone_text_artists, zone_stats_current):
             low = zstat.get("low", None)
             high = zstat.get("high", None)
 
             low_plot = y_min if low is None else low
             high_plot = y_max if high is None else high
 
-            # Skip if zone is completely outside current visible range
             if high_plot < y_min or low_plot > y_max:
+                line.set_visible(False)
+                text.set_visible(False)
                 continue
 
             low_clip = max(low_plot, y_min)
@@ -875,35 +916,17 @@ def plot_interactive(
 
             label = f"{zstat['name']}: {zstat['time_min']:.1f} min ({zstat['pct']:.0f}%)"
 
-            line = ax.plot(
-                [1.0, 1.02],
-                [y_frac, y_frac],
-                transform=ax.transAxes,
-                linestyle="--",
-                linewidth=0.8,
-                color="k",
-                zorder=5,
-                clip_on=False,
-            )[0]
+            line.set_xdata([1.0, 1.02])
+            line.set_ydata([y_frac, y_frac])
+            line.set_visible(True)
 
-            text = ax.text(
-                1.03,
-                y_frac,
-                label,
-                transform=ax.transAxes,
-                ha="left",
-                va="center",
-                fontsize=8,
-                zorder=5,
-                clip_on=False,
-            )
-
-            zone_line_artists.append(line)
-            zone_text_artists.append(text)
+            text.set_position((1.03, y_frac))
+            text.set_text(label)
+            text.set_visible(True)
 
         fig.canvas.draw_idle()
 
-    update_zone_labels()
+    update_zone_labels(force=True)
 
     # Hover line + annotation
     vline = ax.axvline(minutes_arr[0], linestyle="--", zorder=4)
@@ -926,11 +949,15 @@ def plot_interactive(
         annot.set_text(f"{x:.2f} min\n{y:.0f} ± {s:.1f} bpm")
         annot.set_visible(True)
 
+    last_hover_idx: Optional[int] = None
+
     def on_move(event):
+        nonlocal last_hover_idx
         if event.inaxes is not ax:
             if annot.get_visible():
                 annot.set_visible(False)
                 fig.canvas.draw_idle()
+            last_hover_idx = None
             return
 
         x = event.xdata
@@ -938,6 +965,10 @@ def plot_interactive(
             return
 
         idx = find_nearest_index(x, minutes_arr)
+        if last_hover_idx == idx and annot.get_visible():
+            return
+
+        last_hover_idx = idx
         update_annotation(idx)
         fig.canvas.draw_idle()
 
@@ -951,7 +982,6 @@ def plot_interactive(
             return
         ax.set_xlim(min(x1, x2), max(x1, x2))
         ax.set_ylim(min(y1, y2), max(y1, y2))
-        update_zone_labels()
 
     RectangleSelector(
         ax,
@@ -994,7 +1024,6 @@ def plot_interactive(
 
             ax.set_xlim(new_xmin, new_xmax)
             ax.set_ylim(new_ymin, new_ymax)
-            update_zone_labels()
 
         elif event.button == 3:
             # Zoom out by factor 2 around click
@@ -1015,7 +1044,6 @@ def plot_interactive(
 
             ax.set_xlim(new_xmin, new_xmax)
             ax.set_ylim(new_ymin, new_ymax)
-            update_zone_labels()
 
     def on_scroll(event):
         if event.inaxes is not ax:
@@ -1040,7 +1068,6 @@ def plot_interactive(
 
         ax.set_xlim(new_xmin, new_xmax)
         ax.set_ylim(new_ymin, new_ymax)
-        update_zone_labels()
 
     fig.canvas.mpl_connect("button_press_event", on_click)
     fig.canvas.mpl_connect("scroll_event", on_scroll)
@@ -1122,7 +1149,7 @@ def plot_interactive(
         return updated
 
     def apply_profile_changes(new_profile: Dict[str, Any]):
-        nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current
+        nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current, zone_stats_version
 
         zones_updated = build_zones_from_config(
             new_profile.get("zones_cfg_raw"),
@@ -1146,11 +1173,12 @@ def plot_interactive(
 
         zones_current = zones_updated
         zone_stats_current = zone_stats_updated
+        zone_stats_version += 1
         kcal_estimate_current = kcal_estimate_updated
         kcal_sigma_current = kcal_sigma_updated
 
         draw_zone_bands(zones_current)
-        update_zone_labels()
+        update_zone_labels(force=True)
         update_stats_text(kcal_estimate_current, kcal_sigma_current)
         fig.canvas.draw_idle()
 
