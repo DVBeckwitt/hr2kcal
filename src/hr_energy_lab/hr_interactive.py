@@ -29,6 +29,9 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector, Button, TextBox, CheckButtons
 import yaml
 
+# Exit code used to signal the launcher that the window requested a forced quit.
+FORCED_EXIT_CODE = 99
+
 
 # ---------------------------------------------------------------------
 # FIT reading and file selection
@@ -1146,9 +1149,9 @@ def plot_interactive(
     def on_close(event):
         plt.close("all")
         try:
-            sys.exit(0)
+            sys.exit(FORCED_EXIT_CODE)
         finally:
-            os._exit(0)
+            os._exit(FORCED_EXIT_CODE)
 
     fig.canvas.mpl_connect("close_event", on_close)
 
