@@ -1159,25 +1159,6 @@ def plot_interactive(
     # --- Profile controls under the plot ---
     controls_ax.set_title("Quick profile tweaks (updates this session only)")
 
-    fit_dir_display = controls_ax.text(
-        0.02,
-        0.98,
-        "",
-        fontsize=9,
-        ha="left",
-        va="top",
-    )
-
-    def update_fit_dir_display(dir_value: Optional[str]):
-        label = dir_value if dir_value else "(not set)"
-        fit_dir_display.set_text(f"FIT folder: {label}")
-
-    update_fit_dir_display(profile_state.get("default_fit_dir"))
-
-    browse_ax = controls_ax.inset_axes([0.68, 0.9, 0.28, 0.08])
-    browse_button = Button(browse_ax, "Pick FIT folder")
-    browse_button.label.set_fontsize(9)
-
     field_specs = [
         ("Name", "name", True, str),
         ("Sex (M/F)", "sex", False, lambda v: str(v).strip().upper()),
@@ -1191,17 +1172,21 @@ def plot_interactive(
 
     text_boxes: Dict[str, TextBox] = {}
     ncols = 3
-    col_width = 0.31
-    row_height = 0.23
+    nrows = (len(field_specs) + ncols - 1) // ncols
     start_x = 0.02
-    start_y = 0.78
+    usable_width = 0.96
+    col_width = usable_width / ncols
+    box_width = col_width - 0.025
+    row_height = 0.18
+    box_height = 0.15
+    start_y = 0.84
 
     for idx, (label, key, allow_none, caster) in enumerate(field_specs):
         row = idx // ncols
         col = idx % ncols
         x0 = start_x + col * col_width
         y0 = start_y - row * row_height
-        ax_box = controls_ax.inset_axes([x0, y0, col_width - 0.02, 0.16])
+        ax_box = controls_ax.inset_axes([x0, y0, box_width, box_height])
 
         initial_val = profile_state.get(key, "")
         if initial_val is None:
@@ -1213,6 +1198,41 @@ def plot_interactive(
         text_boxes[key] = tb
         tb.label.set_fontsize(8.5)
         tb.text_disp.set_fontsize(9)
+
+    fit_row = nrows
+    fit_y = start_y - fit_row * row_height
+    fit_button_width = box_width
+    fit_button_height = 0.14
+    fit_button_x = start_x + 2 * col_width
+
+    fit_dir_display = controls_ax.text(
+        start_x,
+        fit_y + fit_button_height / 2,
+        "",
+        fontsize=9,
+        ha="left",
+        va="center",
+    )
+
+    def shorten_label(raw: str, max_len: int = 60) -> str:
+        if len(raw) <= max_len:
+            return raw
+        keep = max_len - 1
+        head = max(10, keep // 2)
+        tail = keep - head
+        return f"{raw[:head]}…{raw[-tail:]}"
+
+    def update_fit_dir_display(dir_value: Optional[str]):
+        label = dir_value if dir_value else "(not set)"
+        fit_dir_display.set_text(f"FIT folder: {shorten_label(label)}")
+
+    update_fit_dir_display(profile_state.get("default_fit_dir"))
+
+    browse_ax = controls_ax.inset_axes(
+        [fit_button_x, fit_y, fit_button_width, fit_button_height]
+    )
+    browse_button = Button(browse_ax, "Pick FIT folder")
+    browse_button.label.set_fontsize(9)
 
     include_unc_ax = controls_ax.inset_axes([0.02, 0.2, 0.15, 0.15])
     include_unc_checkbox = CheckButtons(
