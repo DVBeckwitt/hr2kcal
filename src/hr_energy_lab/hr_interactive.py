@@ -1178,6 +1178,10 @@ def plot_interactive(
     ]
 
     text_boxes: Dict[str, TextBox] = {}
+    tooltip_texts: Dict[Any, str] = {}
+
+    def register_tooltip(ax_obj, message: str):
+        tooltip_texts[ax_obj] = message
     ncols = 3
     nrows = (len(field_specs) + ncols - 1) // ncols
     start_x = 0.02
@@ -1205,6 +1209,19 @@ def plot_interactive(
         text_boxes[key] = tb
         tb.label.set_fontsize(8.5)
         tb.text_disp.set_fontsize(9)
+        register_tooltip(
+            tb.ax,
+            {
+                "name": "Displayed name for your records.",
+                "sex": "Biological sex (M/F) used by the calorie model.",
+                "age": "Age in years used by the calorie estimate.",
+                "weight_kg": "Body weight in kilograms for calorie math.",
+                "hr_rest": "Resting heart rate in bpm.",
+                "hr_max": "Estimated or measured maximum heart rate in bpm.",
+                "hr_error_bpm": "Device noise floor (1σ) in bpm for uncertainty.",
+                "calories_model_frac": "Fractional 1σ model error (e.g. 0.2 = 20%).",
+            }[key],
+        )
 
     fit_row = nrows
     fit_y = start_y - fit_row * row_height
@@ -1240,6 +1257,10 @@ def plot_interactive(
     )
     browse_button = Button(browse_ax, "Pick FIT folder")
     browse_button.label.set_fontsize(9)
+    register_tooltip(
+        browse_button.ax,
+        "Choose the folder that holds your .fit files; saved as the default.",
+    )
 
     include_unc_ax = controls_ax.inset_axes([0.02, 0.2, 0.15, 0.15])
     include_unc_checkbox = CheckButtons(
@@ -1249,6 +1270,10 @@ def plot_interactive(
     )
     for txt in include_unc_checkbox.labels:
         txt.set_fontsize(9)
+    register_tooltip(
+        include_unc_checkbox.ax,
+        "Adds the model's fractional error on top of HR noise for calories.",
+    )
 
     status_text = controls_ax.text(0.02, 0.05, "", fontsize=9)
 
@@ -1367,16 +1392,64 @@ def plot_interactive(
     save_button = Button(save_ax, "Save to file")
     save_button.label.set_fontsize(9)
     save_button.on_clicked(on_save)
+    register_tooltip(
+        save_button.ax,
+        "Write the current session values back into profile.yaml.",
+    )
 
     apply_ax = controls_ax.inset_axes([0.72, 0.05, 0.12, 0.14])
     apply_button = Button(apply_ax, "Apply changes")
     apply_button.label.set_fontsize(9)
     apply_button.on_clicked(on_apply)
+    register_tooltip(
+        apply_button.ax,
+        "Recalculate zones and calories in-session without saving to disk.",
+    )
 
     reset_ax = controls_ax.inset_axes([0.86, 0.05, 0.12, 0.14])
     reset_button = Button(reset_ax, "Reset")
     reset_button.label.set_fontsize(9)
     reset_button.on_clicked(on_reset)
+    register_tooltip(
+        reset_button.ax,
+        "Restore the controls to the last saved YAML values.",
+    )
+
+    tooltip = fig.text(
+        0,
+        0,
+        "",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        bbox=dict(boxstyle="round", facecolor="#fff9c4", edgecolor="#fdd835", alpha=0.9),
+        visible=False,
+        zorder=10,
+    )
+    last_tip_ax: Optional[Any] = None
+
+    def on_motion(event):
+        nonlocal last_tip_ax
+        ax_under = event.inaxes
+        if ax_under in tooltip_texts:
+            fig_x, fig_y = fig.transFigure.inverted().transform((event.x, event.y))
+            fig_x = min(max(fig_x + 0.01, 0.0), 0.98)
+            fig_y = min(max(fig_y + 0.01, 0.0), 0.98)
+            tooltip.set_position((fig_x, fig_y))
+            new_text = tooltip_texts[ax_under]
+            if not tooltip.get_visible() or new_text != tooltip.get_text() or ax_under != last_tip_ax:
+                tooltip.set_text(new_text)
+                tooltip.set_visible(True)
+                last_tip_ax = ax_under
+                fig.canvas.draw_idle()
+            else:
+                fig.canvas.draw_idle()
+        elif tooltip.get_visible():
+            tooltip.set_visible(False)
+            last_tip_ax = None
+            fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", on_motion)
 
     plt.show()
 
