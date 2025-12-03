@@ -3,10 +3,12 @@
 #   pip install numpy fitparse matplotlib pyyaml
 #
 # Usage:
-#   - Put this script and profile.yaml in the same folder as your .fit files
+#   - Put this script and profile.yaml in the same folder as your .fit files,
+#     or be ready to point the script at the folder containing them.
 #   - Run: python hr_interactive.py
-#   - It will list the newest .fit files (count from YAML), ask which to load,
-#     copy (minute,HR) CSV to clipboard, and open an interactive plot.
+#   - It will ask which folder to scan, list the newest .fit files (count from
+#     YAML), ask which to load, copy (minute,HR) CSV to clipboard, and open an
+#     interactive plot.
 
 from pathlib import Path
 from datetime import datetime
@@ -18,7 +20,7 @@ import statistics as stats
 import numpy as np
 import fitparse
 import matplotlib.pyplot as plt
-from matplotlib.widgets import RectangleSelector
+from matplotlib.widgets import RectangleSelector, Button, TextBox, CheckButtons
 import yaml
 
 
@@ -101,6 +103,29 @@ def choose_fit_in_folder(
             return matches[0]
 
         print("Filename not found. Use exact name, for example crossfit.fit.")
+
+
+def prompt_fit_directory(default_dir: Optional[Path] = None) -> Path:
+    """Ask the user which folder to scan for .fit files."""
+    if default_dir is None:
+        default_dir = Path.cwd()
+
+    while True:
+        user_input = input(
+            f"Folder containing .fit files (leave blank for {default_dir}): "
+        ).strip()
+
+        if user_input == "":
+            candidate = default_dir
+        else:
+            candidate = Path(user_input).expanduser()
+            if not candidate.is_absolute():
+                candidate = (default_dir / candidate).resolve()
+
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+        print("Directory does not exist. Please enter a valid folder path.")
 
 
 def copy_csv_to_clipboard(minutes, hr_vals):
@@ -307,6 +332,7 @@ def load_profile_from_yaml(path: Path) -> Dict[str, Any]:
         "hr_rest": hr_rest,
         "hr_max": hr_max,
         "zones": zones,
+        "zones_cfg_raw": zones_cfg,
         "hr_error_bpm": hr_error_bpm,
         "smoothing_target_durations_min": target_durations_min,
         "calories_model_frac": model_frac,
@@ -331,6 +357,7 @@ def prompt_user_profile_fallback() -> Dict[str, Any]:
         "hr_rest": None,
         "hr_max": None,
         "zones": [],
+        "zones_cfg_raw": [],
         "hr_error_bpm": 3.0,
         "smoothing_target_durations_min": None,
         "calories_model_frac": 0.2,
@@ -600,6 +627,7 @@ def plot_interactive(
     kcal_sigma,
     zones,
     zone_stats,
+    profile: Dict[str, Any],
 ):
     if not minutes:
         print("No valid HR records found.")
@@ -618,28 +646,49 @@ def plot_interactive(
     x_full_max = float(minutes_arr.max())
     y_margin = 0.05 * max(1.0, y_full_max - y_full_min)
 
-    fig, ax = plt.subplots(figsize=(9, 4.5))
-    fig.subplots_adjust(right=0.8)
+    fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[3, 1.2])
+    ax = fig.add_subplot(gs[0])
+    controls_ax = fig.add_subplot(gs[1])
+    controls_ax.axis("off")
+
+    # Keep mutable state for profile-driven updates
+    profile_state = dict(profile)
+    baseline_profile = dict(profile)
+    zones_current = list(zones)
+    zone_stats_current = list(zone_stats)
+    kcal_estimate_current = kcal_estimate
+    kcal_sigma_current = kcal_sigma
 
     # Zone shading
-    if zones:
-        zone_colors = [
-            "#e0f3db",
-            "#a8ddb5",
-            "#7bccc4",
-            "#4eb3d3",
-            "#2b8cbe",
-            "#fdae6b",
-            "#fb6a4a",
-        ]
-        for i, z in enumerate(zones):
+    zone_colors = [
+        "#e0f3db",
+        "#a8ddb5",
+        "#7bccc4",
+        "#4eb3d3",
+        "#2b8cbe",
+        "#fdae6b",
+        "#fb6a4a",
+    ]
+    zone_patches: List[Any] = []
+
+    def draw_zone_bands(zones_list: List[Dict[str, Any]]):
+        nonlocal zone_patches
+        for patch in zone_patches:
+            try:
+                patch.remove()
+            except ValueError:
+                pass
+        zone_patches = []
+
+        for i, z in enumerate(zones_list):
             low = z.get("low", None)
             high = z.get("high", None)
 
             low_plot = y_full_min if low is None else low
             high_plot = y_full_max if high is None else high
 
-            ax.axhspan(
+            patch = ax.axhspan(
                 low_plot,
                 high_plot,
                 facecolor=zone_colors[i % len(zone_colors)],
@@ -647,6 +696,9 @@ def plot_interactive(
                 zorder=0,
                 label="_nolegend_",
             )
+            zone_patches.append(patch)
+
+    draw_zone_bands(zones_current)
 
     # Data
     ax.plot(minutes, hr_vals, alpha=0.3, linewidth=1.0, label="Raw HR", zorder=2)
@@ -664,38 +716,48 @@ def plot_interactive(
     ax.legend(handles, labels, loc="best")
 
     # Stats box (fixed in axes coords)
-    y_axis_min, y_axis_max = ax.get_ylim()
-    y_span = max(y_axis_max - y_axis_min, 1e-6)
+    def build_stats_lines(kcal_val, kcal_sigma_val):
+        lines: List[str] = []
+        if hr_stats is not None:
+            mean_hr, median_hr, min_hr, max_hr = hr_stats
+            lines.append(f"Mean:   {mean_hr:.1f} bpm")
+            lines.append(f"Median: {median_hr:.1f} bpm")
+            lines.append(f"Min:    {min_hr:.0f} bpm")
+            lines.append(f"Max:    {max_hr:.0f} bpm")
 
-    stats_lines = []
-    if hr_stats is not None:
-        mean_hr, median_hr, min_hr, max_hr = hr_stats
-        stats_lines.append(f"Mean:   {mean_hr:.1f} bpm")
-        stats_lines.append(f"Median: {median_hr:.1f} bpm")
-        stats_lines.append(f"Min:    {min_hr:.0f} bpm")
-        stats_lines.append(f"Max:    {max_hr:.0f} bpm")
+        if kcal_val is not None:
+            if kcal_sigma_val is not None and kcal_sigma_val > 0:
+                lines.append(f"Est. cals: {kcal_val:.0f} ± {kcal_sigma_val:.0f} kcal")
+            else:
+                lines.append(f"Est. cals: {kcal_val:.0f} kcal")
+        return lines
 
-    if kcal_estimate is not None:
-        if kcal_sigma is not None and kcal_sigma > 0:
-            stats_lines.append(
-                f"Est. cals: {kcal_estimate:.0f} ± {kcal_sigma:.0f} kcal"
-            )
-        else:
-            stats_lines.append(f"Est. cals: {kcal_estimate:.0f} kcal")
+    stats_text_artist = None
 
-    if stats_lines:
-        stats_text = "\n".join(stats_lines)
-        ax.text(
-            0.01,
-            0.99,
-            stats_text,
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-            zorder=4,
-        )
+    def update_stats_text(kcal_val, kcal_sigma_val):
+        nonlocal stats_text_artist
+        stats_lines = build_stats_lines(kcal_val, kcal_sigma_val)
+        if stats_lines:
+            stats_text = "\n".join(stats_lines)
+            if stats_text_artist is None:
+                stats_text_artist = ax.text(
+                    0.01,
+                    0.99,
+                    stats_text,
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=9,
+                    bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+                    zorder=4,
+                )
+            else:
+                stats_text_artist.set_text(stats_text)
+        elif stats_text_artist is not None:
+            stats_text_artist.remove()
+            stats_text_artist = None
+
+    update_stats_text(kcal_estimate_current, kcal_sigma_current)
 
     # Dynamic zone labels on the right side (outside), updated on zoom
     zone_line_artists: List[Any] = []
@@ -713,14 +775,14 @@ def plot_interactive(
         zone_line_artists = []
         zone_text_artists = []
 
-        if not zone_stats:
+        if not zone_stats_current:
             fig.canvas.draw_idle()
             return
 
         y_min, y_max = ax.get_ylim()
         span = max(y_max - y_min, 1e-6)
 
-        for zstat in zone_stats:
+        for zstat in zone_stats_current:
             low = zstat.get("low", None)
             high = zstat.get("high", None)
 
@@ -768,7 +830,6 @@ def plot_interactive(
 
         fig.canvas.draw_idle()
 
-    # Initial draw of zone labels
     update_zone_labels()
 
     # Hover line + annotation
@@ -878,6 +939,143 @@ def plot_interactive(
     ax.callbacks.connect("ylim_changed", lambda ax: update_zone_labels())
     ax.callbacks.connect("xlim_changed", lambda ax: update_zone_labels())
 
+    # --- Profile controls under the plot ---
+    controls_ax.set_title("Quick profile tweaks (updates this session only)")
+
+    field_specs = [
+        ("Name", "name", True, str),
+        ("Sex (M/F)", "sex", False, lambda v: str(v).strip().upper()),
+        ("Age (years)", "age", False, int),
+        ("Weight (kg)", "weight_kg", False, float),
+        ("Rest HR", "hr_rest", True, float),
+        ("Max HR", "hr_max", True, float),
+        ("HR error bpm", "hr_error_bpm", False, float),
+        ("Model frac", "calories_model_frac", False, float),
+    ]
+
+    text_boxes: Dict[str, TextBox] = {}
+    ncols = 3
+    col_width = 0.31
+    row_height = 0.23
+    start_x = 0.02
+    start_y = 0.78
+
+    for idx, (label, key, allow_none, caster) in enumerate(field_specs):
+        row = idx // ncols
+        col = idx % ncols
+        x0 = start_x + col * col_width
+        y0 = start_y - row * row_height
+        ax_box = controls_ax.inset_axes([x0, y0, col_width - 0.02, 0.16])
+
+        initial_val = profile_state.get(key, "")
+        if initial_val is None:
+            initial_text = ""
+        else:
+            initial_text = f"{initial_val}"
+
+        tb = TextBox(ax_box, label + "\n", initial=initial_text)
+        text_boxes[key] = tb
+        tb.label.set_fontsize(8.5)
+        tb.text_disp.set_fontsize(9)
+
+    include_unc_ax = controls_ax.inset_axes([0.02, 0.2, 0.15, 0.15])
+    include_unc_checkbox = CheckButtons(
+        include_unc_ax,
+        ["Include model uncertainty"],
+        [bool(profile_state.get("calories_include_model_uncertainty", True))],
+    )
+    for txt in include_unc_checkbox.labels:
+        txt.set_fontsize(9)
+
+    status_text = controls_ax.text(0.02, 0.05, "", fontsize=9)
+
+    def parse_field(text: str, allow_none: bool, caster):
+        cleaned = text.strip()
+        if cleaned == "" and allow_none:
+            return None
+        return caster(cleaned)
+
+    def apply_profile_changes(new_profile: Dict[str, Any]):
+        nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current
+
+        zones_updated = build_zones_from_config(
+            new_profile.get("zones_cfg_raw"),
+            new_profile.get("hr_rest"),
+            new_profile.get("hr_max"),
+        )
+        zone_stats_updated, _ = compute_zone_stats(minutes, smoothed, zones_updated)
+        kcal_estimate_updated, kcal_sigma_updated = estimate_calories_kcal_strict(
+            minutes,
+            smoothed,
+            sigma,
+            new_profile["sex"],
+            int(new_profile["age"]),
+            float(new_profile["weight_kg"]),
+            float(new_profile["hr_error_bpm"]),
+            model_frac=float(new_profile.get("calories_model_frac", 0.2)),
+            include_model_uncertainty=bool(
+                new_profile.get("calories_include_model_uncertainty", True)
+            ),
+        )
+
+        zones_current = zones_updated
+        zone_stats_current = zone_stats_updated
+        kcal_estimate_current = kcal_estimate_updated
+        kcal_sigma_current = kcal_sigma_updated
+
+        draw_zone_bands(zones_current)
+        update_zone_labels()
+        update_stats_text(kcal_estimate_current, kcal_sigma_current)
+        fig.canvas.draw_idle()
+
+    def on_apply(event):
+        nonlocal profile_state
+        try:
+            updated = dict(profile_state)
+            for label, key, allow_none, caster in field_specs:
+                text_val = text_boxes[key].text
+                parsed = parse_field(text_val, allow_none, caster)
+                if key == "sex" and parsed not in ("M", "F"):
+                    raise ValueError("Sex must be M or F")
+                updated[key] = parsed
+
+            updated["calories_include_model_uncertainty"] = include_unc_checkbox.get_status()[0]
+
+            if updated.get("age") is None or updated.get("weight_kg") is None:
+                raise ValueError("Age and weight are required.")
+
+            apply_profile_changes(updated)
+            profile_state = updated
+            status_text.set_text("Profile tweaks applied to plot.")
+        except Exception as exc:
+            status_text.set_text(f"Could not update: {exc}")
+        fig.canvas.draw_idle()
+
+    def on_reset(event):
+        nonlocal profile_state
+        profile_state = dict(baseline_profile)
+        for label, key, allow_none, caster in field_specs:
+            val = profile_state.get(key, "")
+            text_boxes[key].set_val("" if val is None else f"{val}")
+        desired_unc = bool(
+            profile_state.get("calories_include_model_uncertainty", True)
+        )
+        current_unc = include_unc_checkbox.get_status()[0]
+        if desired_unc != current_unc:
+            include_unc_checkbox.set_active(0)
+        apply_profile_changes(profile_state)
+        status_text.set_text("Reset to YAML values for this session.")
+
+    apply_ax = controls_ax.inset_axes([0.72, 0.05, 0.12, 0.14])
+    apply_button = Button(apply_ax, "Apply changes")
+    apply_button.label.set_fontsize(9)
+    apply_button.on_clicked(on_apply)
+
+    reset_ax = controls_ax.inset_axes([0.86, 0.05, 0.12, 0.14])
+    reset_button = Button(reset_ax, "Reset")
+    reset_button.label.set_fontsize(9)
+    reset_button.on_clicked(on_reset)
+
     plt.show()
 
 
@@ -888,8 +1086,10 @@ def plot_interactive(
 def main():
     profile = get_profile()
 
+    default_dir = Path.cwd()
+    fit_dir = prompt_fit_directory(default_dir)
     fit_path = choose_fit_in_folder(
-        Path.cwd(),
+        fit_dir,
         max_files=profile.get("recent_fit_files", 5),
     )
     print(f"Using FIT file: {fit_path}")
@@ -941,6 +1141,7 @@ def main():
         kcal_sigma,
         zones,
         zone_stats,
+        profile,
     )
 
 

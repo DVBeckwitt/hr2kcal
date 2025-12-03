@@ -23,8 +23,7 @@ hr-energy-lab/
 ├── requirements.txt         # Runtime dependencies for quick installs
 ├── README.md                # This document
 ├── LICENSE                  # MIT License
-├── scripts/
-│   └── run.bat              # Windows helper that runs the module
+├── run.bat                  # Windows helper that runs the module
 ├── examples/
 │   └── profile.example.yaml # Sample profile configuration
 └── src/hr_energy_lab/
@@ -109,6 +108,10 @@ Calories (strict propagation + floor): E = 650 ± 40 kcal (hr_error_bpm=3.0)
 * Dynamic zone labels that update when you zoom
 * Hover tooltips and rectangle zoom + double-click/ right-click zoom controls
 
+### In-plot profile tweaks
+
+Below the figure, a profile panel mirrors common `profile.yaml` fields (name, sex, age, weight in kg, rest/max HR, HR error floor, calorie model fraction, model uncertainty toggle). Updating a field and clicking **Apply changes** recalculates calories, zones, and labels immediately. **Reset** reloads everything from `profile.yaml` for the current session.
+
 ### CSV export
 
 `copy_csv_to_clipboard(minutes, hr_vals)` builds a CSV with headers and copies it to the Windows clipboard (or prints a notice elsewhere).
@@ -142,14 +145,15 @@ pip install -r requirements.txt
 
 1. Place your `.fit` files in a folder together with a `profile.yaml`.
 2. Copy and edit `examples/profile.example.yaml` with your details.
-3. From that folder, run:
+3. From any folder, run:
 
    ```bash
    python -m hr_energy_lab.hr_interactive
    # or after installation
    hr-energy-lab
    ```
-4. The script lists the newest `.fit` files, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
+4. When prompted, point the script at the folder containing your `.fit` files. It lists the newest files there, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
+5. Use the profile panel under the plot to tweak values (weight, HR rest/max, error floor, model fraction, etc.) for quick what-if experiments without editing `profile.yaml`. Changes affect the live plot only; "Reset" brings you back to the YAML values.
 
 ---
 
