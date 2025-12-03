@@ -24,6 +24,7 @@ hr-energy-lab/
 ├── README.md                # This document
 ├── LICENSE                  # MIT License
 ├── run.bat                  # Windows helper that runs the module
+├── fit_files/               # Default .fit directory with a sample file
 ├── examples/
 │   └── profile.example.yaml # Sample profile configuration
 └── src/hr_energy_lab/
@@ -143,7 +144,7 @@ pip install -r requirements.txt
 
 ## Quick start
 
-1. Place your `.fit` files in a folder together with a `profile.yaml`.
+1. Place your `.fit` files in `fit_files/` (the default) alongside a `profile.yaml` or point the app at a different folder in the GUI.
 2. Copy and edit `examples/profile.example.yaml` with your details.
 3. From any folder, run:
 
@@ -152,8 +153,12 @@ pip install -r requirements.txt
    # or after installation
    hr-energy-lab
    ```
-4. When prompted, point the script at the folder containing your `.fit` files. It lists the newest files there, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
+4. When prompted, point the script at the folder containing your `.fit` files (defaults to `fit_files/`). It lists the newest files there, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
 5. Use the profile panel under the plot to tweak values (weight, HR rest/max, error floor, model fraction, etc.) for quick what-if experiments without editing `profile.yaml`. Changes affect the live plot only; "Reset" brings you back to the YAML values.
+
+### Sample FIT file
+
+A demo activity (`sample.fit`) from the `fitparse` test suite is bundled in `fit_files/`. The app starts in that folder by default so new users can open the plot immediately before pointing the tool at their own data.
 
 ---
 

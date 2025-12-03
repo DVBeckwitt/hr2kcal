@@ -4,7 +4,8 @@
 #
 # Usage:
 #   - Put this script and profile.yaml in the folder you want to use for .fit
-#     files (or set that folder once in the GUI).
+#     files (or set that folder once in the GUI). By default it now looks in
+#     ./fit_files where a sample .fit is provided.
 #   - Run: python hr_interactive.py
 #   - It will load your default .fit folder (or prompt once to set one if empty),
 #     list the newest .fit files (count from YAML), ask which to load, copy
@@ -1495,7 +1496,12 @@ def main():
     profile_path = Path.cwd() / "profile.yaml"
     profile, profile_yaml_data = get_profile(profile_path)
 
-    fallback_dir = Path.cwd()
+    fallback_dir = Path.cwd() / "fit_files"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+
+    if not profile.get("default_fit_dir"):
+        profile["default_fit_dir"] = str(fallback_dir)
+
     fit_dir, profile, profile_yaml_data = ensure_fit_directory(
         profile,
         profile_yaml_data,
