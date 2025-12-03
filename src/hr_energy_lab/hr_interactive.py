@@ -3,12 +3,12 @@
 #   pip install numpy fitparse matplotlib pyyaml
 #
 # Usage:
-#   - Put this script and profile.yaml in the same folder as your .fit files,
-#     or be ready to point the script at the folder containing them.
+#   - Put this script and profile.yaml in the folder you want to use for .fit
+#     files (or set that folder once in the GUI).
 #   - Run: python hr_interactive.py
-#   - It will ask which folder to scan, list the newest .fit files (count from
-#     YAML), ask which to load, copy (minute,HR) CSV to clipboard, and open an
-#     interactive plot.
+#   - It will load your default .fit folder (or prompt once to set one if empty),
+#     list the newest .fit files (count from YAML), ask which to load, copy
+#     (minute,HR) CSV to clipboard, and open an interactive plot.
 
 from pathlib import Path
 import copy
@@ -17,6 +17,9 @@ from typing import Optional, Tuple, List, Dict, Any
 import subprocess
 import bisect
 import statistics as stats
+import tkinter as tk
+from tkinter import filedialog
+import sys
 
 import numpy as np
 import fitparse
@@ -127,6 +130,70 @@ def prompt_fit_directory(default_dir: Optional[Path] = None) -> Path:
             return candidate
 
         print("Directory does not exist. Please enter a valid folder path.")
+
+
+def select_directory_with_dialog(initial_dir: Path) -> Optional[Path]:
+    """Open a native folder chooser; return None if cancelled or unavailable."""
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        selected = filedialog.askdirectory(initialdir=str(initial_dir))
+        root.destroy()
+        if selected:
+            return Path(selected).expanduser()
+    except Exception:
+        return None
+    return None
+
+
+def has_fit_files(path: Path) -> bool:
+    """Return True if the directory contains at least one .fit file."""
+
+    return any(path.glob("*.fit"))
+
+
+def ensure_fit_directory(
+    profile: Dict[str, Any],
+    profile_yaml_data: Dict[str, Any],
+    profile_path: Path,
+    fallback_dir: Path,
+) -> Tuple[Path, Dict[str, Any], Dict[str, Any]]:
+    """
+    Return a valid FIT directory, prompting with a file manager if needed.
+
+    If the resolved default folder has no .fit files, the user is asked to pick
+    a replacement before the GUI opens. The chosen folder becomes the in-memory
+    default and is written back to profile.yaml.
+    """
+
+    current_default = profile.get("default_fit_dir")
+    fit_dir = Path(current_default).expanduser() if current_default else fallback_dir
+
+    if not fit_dir.exists():
+        fit_dir = fallback_dir
+
+    if has_fit_files(fit_dir):
+        return fit_dir, profile, profile_yaml_data
+
+    print(
+        f"No .fit files found in {fit_dir}. "
+        "Choose a folder to set as the default FIT directory."
+    )
+
+    chosen = select_directory_with_dialog(fit_dir)
+    if chosen is None:
+        chosen = prompt_fit_directory(fit_dir)
+
+    if not has_fit_files(chosen):
+        raise FileNotFoundError(
+            f"Selected directory {chosen} does not contain any .fit files."
+        )
+
+    profile["default_fit_dir"] = str(chosen)
+    saved_yaml = save_profile_to_yaml(profile, profile_path, profile_yaml_data)
+    return chosen, profile, saved_yaml
 
 
 def copy_csv_to_clipboard(minutes, hr_vals):
@@ -316,6 +383,10 @@ def load_profile_from_yaml(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     # Script-level UI config
     script_cfg = data.get("script", {}) or {}
     recent_fit_files = int(script_cfg.get("recent_fit_files", 5))
+    default_fit_dir_raw = script_cfg.get("default_fit_dir")
+    default_fit_dir = None
+    if isinstance(default_fit_dir_raw, str) and default_fit_dir_raw.strip():
+        default_fit_dir = str(Path(default_fit_dir_raw).expanduser())
 
     print(
         "Loaded profile from YAML: "
@@ -339,6 +410,7 @@ def load_profile_from_yaml(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         "calories_model_frac": model_frac,
         "calories_include_model_uncertainty": include_model_unc,
         "recent_fit_files": recent_fit_files,
+        "default_fit_dir": default_fit_dir,
     }
     return profile, data
 
@@ -364,6 +436,7 @@ def prompt_user_profile_fallback() -> Dict[str, Any]:
         "calories_model_frac": 0.2,
         "calories_include_model_uncertainty": True,
         "recent_fit_files": 5,
+        "default_fit_dir": None,
     }
     return profile
 
@@ -404,6 +477,14 @@ def build_profile_yaml(profile_state: Dict[str, Any], base_yaml: Dict[str, Any])
         profile_state.get("calories_include_model_uncertainty", True)
     )
     data["calories"] = cal_cfg
+
+    script_cfg = data.get("script", {}) or {}
+    if profile_state.get("recent_fit_files") is not None:
+        script_cfg["recent_fit_files"] = int(profile_state.get("recent_fit_files", 5))
+    fit_dir_val = profile_state.get("default_fit_dir")
+    if fit_dir_val:
+        script_cfg["default_fit_dir"] = str(fit_dir_val)
+    data["script"] = script_cfg
 
     return data
 
@@ -693,8 +774,10 @@ def plot_interactive(
     y_margin = 0.05 * max(1.0, y_full_max - y_full_min)
 
     fig = plt.figure(figsize=(10, 6), constrained_layout=True)
+    fig.patch.set_facecolor("#f7f9fc")
     gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[3, 1.2])
     ax = fig.add_subplot(gs[0])
+    ax.set_facecolor("#f3f6fb")
     controls_ax = fig.add_subplot(gs[1])
     controls_ax.axis("off")
 
@@ -749,9 +832,32 @@ def plot_interactive(
     draw_zone_bands(zones_current)
 
     # Data
-    ax.plot(minutes, hr_vals, alpha=0.3, linewidth=1.0, label="Raw HR", zorder=2)
-    ax.plot(minutes, smoothed_hr, linewidth=1.5, label="Smoothed HR", zorder=3)
-    ax.fill_between(minutes, lower, upper, alpha=0.2, label="±1σ (local)", zorder=1)
+    ax.plot(
+        minutes,
+        hr_vals,
+        alpha=0.35,
+        linewidth=1.0,
+        label="Raw HR",
+        zorder=2,
+        color="#2b8cbe",
+    )
+    ax.plot(
+        minutes,
+        smoothed_hr,
+        linewidth=1.8,
+        label="Smoothed HR",
+        zorder=3,
+        color="#fb6a4a",
+    )
+    ax.fill_between(
+        minutes,
+        lower,
+        upper,
+        alpha=0.22,
+        label="±1σ (local)",
+        zorder=1,
+        color="#9ecae1",
+    )
 
     ax.set_xlabel("Minutes from start")
     ax.set_ylabel("Heart rate [bpm]")
@@ -810,35 +916,75 @@ def plot_interactive(
     # Dynamic zone labels on the right side (outside), updated on zoom
     zone_line_artists: List[Any] = []
     zone_text_artists: List[Any] = []
+    zone_stats_version = 0
+    last_zone_stats_version = -1
+    last_ylim: Optional[Tuple[float, float]] = None
 
-    def update_zone_labels():
-        nonlocal zone_line_artists, zone_text_artists
+    def ensure_zone_artists(count: int):
+        while len(zone_line_artists) < count:
+            line = ax.plot(
+                [1.0, 1.02],
+                [0.0, 0.0],
+                transform=ax.transAxes,
+                linestyle="--",
+                linewidth=0.8,
+                color="k",
+                zorder=5,
+                clip_on=False,
+            )[0]
+            text = ax.text(
+                1.03,
+                0.0,
+                "",
+                transform=ax.transAxes,
+                ha="left",
+                va="center",
+                fontsize=8,
+                zorder=5,
+                clip_on=False,
+            )
+            zone_line_artists.append(line)
+            zone_text_artists.append(text)
 
-        # Remove existing artists
-        for art in zone_line_artists + zone_text_artists:
-            try:
-                art.remove()
-            except ValueError:
-                pass
-        zone_line_artists = []
-        zone_text_artists = []
+        while len(zone_line_artists) > count:
+            zone_line_artists.pop().remove()
+            zone_text_artists.pop().remove()
+
+    def update_zone_labels(force: bool = False):
+        nonlocal last_zone_stats_version, last_ylim
 
         if not zone_stats_current:
-            fig.canvas.draw_idle()
+            for line, text in zip(zone_line_artists, zone_text_artists):
+                line.set_visible(False)
+                text.set_visible(False)
             return
 
         y_min, y_max = ax.get_ylim()
+        if (
+            not force
+            and last_ylim is not None
+            and last_ylim == (y_min, y_max)
+            and last_zone_stats_version == zone_stats_version
+        ):
+            return
+
+        last_ylim = (y_min, y_max)
+        last_zone_stats_version = zone_stats_version
+
         span = max(y_max - y_min, 1e-6)
 
-        for zstat in zone_stats_current:
+        ensure_zone_artists(len(zone_stats_current))
+
+        for line, text, zstat in zip(zone_line_artists, zone_text_artists, zone_stats_current):
             low = zstat.get("low", None)
             high = zstat.get("high", None)
 
             low_plot = y_min if low is None else low
             high_plot = y_max if high is None else high
 
-            # Skip if zone is completely outside current visible range
             if high_plot < y_min or low_plot > y_max:
+                line.set_visible(False)
+                text.set_visible(False)
                 continue
 
             low_clip = max(low_plot, y_min)
@@ -850,35 +996,17 @@ def plot_interactive(
 
             label = f"{zstat['name']}: {zstat['time_min']:.1f} min ({zstat['pct']:.0f}%)"
 
-            line = ax.plot(
-                [1.0, 1.02],
-                [y_frac, y_frac],
-                transform=ax.transAxes,
-                linestyle="--",
-                linewidth=0.8,
-                color="k",
-                zorder=5,
-                clip_on=False,
-            )[0]
+            line.set_xdata([1.0, 1.02])
+            line.set_ydata([y_frac, y_frac])
+            line.set_visible(True)
 
-            text = ax.text(
-                1.03,
-                y_frac,
-                label,
-                transform=ax.transAxes,
-                ha="left",
-                va="center",
-                fontsize=8,
-                zorder=5,
-                clip_on=False,
-            )
+            text.set_position((1.03, y_frac))
+            text.set_text(label)
+            text.set_visible(True)
 
-            zone_line_artists.append(line)
-            zone_text_artists.append(text)
+        return
 
-        fig.canvas.draw_idle()
-
-    update_zone_labels()
+    update_zone_labels(force=True)
 
     # Hover line + annotation
     vline = ax.axvline(minutes_arr[0], linestyle="--", zorder=4)
@@ -901,11 +1029,15 @@ def plot_interactive(
         annot.set_text(f"{x:.2f} min\n{y:.0f} ± {s:.1f} bpm")
         annot.set_visible(True)
 
+    last_hover_idx: Optional[int] = None
+
     def on_move(event):
+        nonlocal last_hover_idx
         if event.inaxes is not ax:
             if annot.get_visible():
                 annot.set_visible(False)
                 fig.canvas.draw_idle()
+            last_hover_idx = None
             return
 
         x = event.xdata
@@ -913,6 +1045,10 @@ def plot_interactive(
             return
 
         idx = find_nearest_index(x, minutes_arr)
+        if last_hover_idx == idx and annot.get_visible():
+            return
+
+        last_hover_idx = idx
         update_annotation(idx)
         fig.canvas.draw_idle()
 
@@ -924,9 +1060,10 @@ def plot_interactive(
         x2, y2 = erelease.xdata, erelease.ydata
         if None in (x1, y1, x2, y2):
             return
-        ax.set_xlim(min(x1, x2), max(x1, x2))
-        ax.set_ylim(min(y1, y2), max(y1, y2))
+        ax.set_xlim(min(x1, x2), max(x1, x2), emit=False)
+        ax.set_ylim(min(y1, y2), max(y1, y2), emit=False)
         update_zone_labels()
+        fig.canvas.draw_idle()
 
     RectangleSelector(
         ax,
@@ -938,6 +1075,13 @@ def plot_interactive(
         spancoords="data",
         interactive=False,
     )
+
+    def clamp_to_full_range(xmin, xmax, ymin, ymax):
+        new_xmin = max(x_full_min, xmin)
+        new_xmax = min(x_full_max, xmax)
+        new_ymin = max(y_full_min - y_margin, ymin)
+        new_ymax = min(y_full_max + y_margin, ymax)
+        return new_xmin, new_xmax, new_ymin, new_ymax
 
     # Double-click in, right-click out (factor 2)
     def on_click(event):
@@ -953,14 +1097,17 @@ def plot_interactive(
             span_x = (cur_xmax - cur_xmin) * 0.5
             span_y = (cur_ymax - cur_ymin) * 0.5
 
-            new_xmin = max(x_full_min, x_center - span_x / 2)
-            new_xmax = min(x_full_max, x_center + span_x / 2)
-            new_ymin = max(y_full_min - y_margin, y_center - span_y / 2)
-            new_ymax = min(y_full_max + y_margin, y_center + span_y / 2)
+            new_xmin, new_xmax, new_ymin, new_ymax = clamp_to_full_range(
+                x_center - span_x / 2,
+                x_center + span_x / 2,
+                y_center - span_y / 2,
+                y_center + span_y / 2,
+            )
 
-            ax.set_xlim(new_xmin, new_xmax)
-            ax.set_ylim(new_ymin, new_ymax)
+            ax.set_xlim(new_xmin, new_xmax, emit=False)
+            ax.set_ylim(new_ymin, new_ymax, emit=False)
             update_zone_labels()
+            fig.canvas.draw_idle()
 
         elif event.button == 3:
             # Zoom out by factor 2 around click
@@ -972,23 +1119,59 @@ def plot_interactive(
             span_x = (cur_xmax - cur_xmin) * 2.0
             span_y = (cur_ymax - cur_ymin) * 2.0
 
-            new_xmin = max(x_full_min, x_center - span_x / 2)
-            new_xmax = min(x_full_max, x_center + span_x / 2)
-            new_ymin = max(y_full_min - y_margin, y_center - span_y / 2)
-            new_ymax = min(y_full_max + y_margin, y_center + span_y / 2)
+            new_xmin, new_xmax, new_ymin, new_ymax = clamp_to_full_range(
+                x_center - span_x / 2,
+                x_center + span_x / 2,
+                y_center - span_y / 2,
+                y_center + span_y / 2,
+            )
 
-            ax.set_xlim(new_xmin, new_xmax)
-            ax.set_ylim(new_ymin, new_ymax)
+            ax.set_xlim(new_xmin, new_xmax, emit=False)
+            ax.set_ylim(new_ymin, new_ymax, emit=False)
             update_zone_labels()
+            fig.canvas.draw_idle()
+
+    def on_scroll(event):
+        if event.inaxes is not ax:
+            return
+
+        # Scroll up zooms in, down zooms out
+        scale = 0.8 if event.step > 0 else 1.25
+        cur_xmin, cur_xmax = ax.get_xlim()
+        cur_ymin, cur_ymax = ax.get_ylim()
+        x_center = event.xdata if event.xdata is not None else 0.5 * (cur_xmin + cur_xmax)
+        y_center = event.ydata if event.ydata is not None else 0.5 * (cur_ymin + cur_ymax)
+
+        span_x = (cur_xmax - cur_xmin) * scale
+        span_y = (cur_ymax - cur_ymin) * scale
+
+        new_xmin, new_xmax, new_ymin, new_ymax = clamp_to_full_range(
+            x_center - span_x / 2,
+            x_center + span_x / 2,
+            y_center - span_y / 2,
+            y_center + span_y / 2,
+        )
+
+        ax.set_xlim(new_xmin, new_xmax, emit=False)
+        ax.set_ylim(new_ymin, new_ymax, emit=False)
+        update_zone_labels()
+        fig.canvas.draw_idle()
 
     fig.canvas.mpl_connect("button_press_event", on_click)
+    fig.canvas.mpl_connect("scroll_event", on_scroll)
+
+    def on_close(event):
+        plt.close("all")
+        sys.exit(0)
+
+    fig.canvas.mpl_connect("close_event", on_close)
 
     # Also update zone labels if toolbar zoom/pan changes limits
     ax.callbacks.connect("ylim_changed", lambda ax: update_zone_labels())
     ax.callbacks.connect("xlim_changed", lambda ax: update_zone_labels())
 
     # --- Profile controls under the plot ---
-    controls_ax.set_title("Quick profile tweaks (updates this session only)")
+    controls_ax.set_title("Profile")
 
     field_specs = [
         ("Name", "name", True, str),
@@ -1002,18 +1185,26 @@ def plot_interactive(
     ]
 
     text_boxes: Dict[str, TextBox] = {}
+    tooltip_texts: Dict[Any, str] = {}
+
+    def register_tooltip(ax_obj, message: str):
+        tooltip_texts[ax_obj] = message
     ncols = 3
-    col_width = 0.31
-    row_height = 0.23
+    nrows = (len(field_specs) + ncols - 1) // ncols
     start_x = 0.02
-    start_y = 0.78
+    usable_width = 0.96
+    col_width = usable_width / ncols
+    box_width = col_width - 0.025
+    row_height = 0.18
+    box_height = 0.15
+    start_y = 0.84
 
     for idx, (label, key, allow_none, caster) in enumerate(field_specs):
         row = idx // ncols
         col = idx % ncols
         x0 = start_x + col * col_width
         y0 = start_y - row * row_height
-        ax_box = controls_ax.inset_axes([x0, y0, col_width - 0.02, 0.16])
+        ax_box = controls_ax.inset_axes([x0, y0, box_width, box_height])
 
         initial_val = profile_state.get(key, "")
         if initial_val is None:
@@ -1025,6 +1216,58 @@ def plot_interactive(
         text_boxes[key] = tb
         tb.label.set_fontsize(8.5)
         tb.text_disp.set_fontsize(9)
+        register_tooltip(
+            tb.ax,
+            {
+                "name": "Displayed name for your records.",
+                "sex": "Biological sex (M/F) used by the calorie model.",
+                "age": "Age in years used by the calorie estimate.",
+                "weight_kg": "Body weight in kilograms for calorie math.",
+                "hr_rest": "Resting heart rate in bpm.",
+                "hr_max": "Estimated or measured maximum heart rate in bpm.",
+                "hr_error_bpm": "Device noise floor (1σ) in bpm for uncertainty.",
+                "calories_model_frac": "Fractional 1σ model error (e.g. 0.2 = 20%).",
+            }[key],
+        )
+
+    fit_row = nrows
+    fit_y = start_y - fit_row * row_height
+    fit_button_width = box_width
+    fit_button_height = 0.14
+    fit_button_x = start_x + 2 * col_width
+
+    fit_dir_display = controls_ax.text(
+        start_x,
+        fit_y + fit_button_height / 2,
+        "",
+        fontsize=9,
+        ha="left",
+        va="center",
+    )
+
+    def shorten_label(raw: str, max_len: int = 60) -> str:
+        if len(raw) <= max_len:
+            return raw
+        keep = max_len - 1
+        head = max(10, keep // 2)
+        tail = keep - head
+        return f"{raw[:head]}…{raw[-tail:]}"
+
+    def update_fit_dir_display(dir_value: Optional[str]):
+        label = dir_value if dir_value else "(not set)"
+        fit_dir_display.set_text(f"FIT folder: {shorten_label(label)}")
+
+    update_fit_dir_display(profile_state.get("default_fit_dir"))
+
+    browse_ax = controls_ax.inset_axes(
+        [fit_button_x, fit_y, fit_button_width, fit_button_height]
+    )
+    browse_button = Button(browse_ax, "Pick FIT folder")
+    browse_button.label.set_fontsize(9)
+    register_tooltip(
+        browse_button.ax,
+        "Choose the folder that holds your .fit files; saved as the default.",
+    )
 
     include_unc_ax = controls_ax.inset_axes([0.02, 0.2, 0.15, 0.15])
     include_unc_checkbox = CheckButtons(
@@ -1034,8 +1277,26 @@ def plot_interactive(
     )
     for txt in include_unc_checkbox.labels:
         txt.set_fontsize(9)
+    register_tooltip(
+        include_unc_checkbox.ax,
+        "Adds the model's fractional error on top of HR noise for calories.",
+    )
 
     status_text = controls_ax.text(0.02, 0.05, "", fontsize=9)
+
+    def on_pick_fit_folder(event=None):
+        start_dir_raw = profile_state.get("default_fit_dir")
+        start_dir = Path(start_dir_raw).expanduser() if start_dir_raw else Path.cwd()
+        chosen_dir = select_directory_with_dialog(start_dir)
+        if chosen_dir is None:
+            status_text.set_text("Folder picker was cancelled.")
+        else:
+            profile_state["default_fit_dir"] = str(chosen_dir)
+            update_fit_dir_display(profile_state["default_fit_dir"])
+            status_text.set_text(f"Default FIT folder set to {chosen_dir}")
+        fig.canvas.draw_idle()
+
+    browse_button.on_clicked(on_pick_fit_folder)
 
     def parse_field(text: str, allow_none: bool, caster):
         cleaned = text.strip()
@@ -1060,7 +1321,7 @@ def plot_interactive(
         return updated
 
     def apply_profile_changes(new_profile: Dict[str, Any]):
-        nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current
+        nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current, zone_stats_version
 
         zones_updated = build_zones_from_config(
             new_profile.get("zones_cfg_raw"),
@@ -1084,11 +1345,12 @@ def plot_interactive(
 
         zones_current = zones_updated
         zone_stats_current = zone_stats_updated
+        zone_stats_version += 1
         kcal_estimate_current = kcal_estimate_updated
         kcal_sigma_current = kcal_sigma_updated
 
         draw_zone_bands(zones_current)
-        update_zone_labels()
+        update_zone_labels(force=True)
         update_stats_text(kcal_estimate_current, kcal_sigma_current)
         fig.canvas.draw_idle()
 
@@ -1129,6 +1391,7 @@ def plot_interactive(
         current_unc = include_unc_checkbox.get_status()[0]
         if desired_unc != current_unc:
             include_unc_checkbox.set_active(0)
+        update_fit_dir_display(profile_state.get("default_fit_dir"))
         apply_profile_changes(profile_state)
         status_text.set_text("Reset to YAML values for this session.")
 
@@ -1136,16 +1399,90 @@ def plot_interactive(
     save_button = Button(save_ax, "Save to file")
     save_button.label.set_fontsize(9)
     save_button.on_clicked(on_save)
+    register_tooltip(
+        save_button.ax,
+        "Write the current session values back into profile.yaml.",
+    )
 
     apply_ax = controls_ax.inset_axes([0.72, 0.05, 0.12, 0.14])
     apply_button = Button(apply_ax, "Apply changes")
     apply_button.label.set_fontsize(9)
     apply_button.on_clicked(on_apply)
+    register_tooltip(
+        apply_button.ax,
+        "Recalculate zones and calories in-session without saving to disk.",
+    )
 
     reset_ax = controls_ax.inset_axes([0.86, 0.05, 0.12, 0.14])
     reset_button = Button(reset_ax, "Reset")
     reset_button.label.set_fontsize(9)
     reset_button.on_clicked(on_reset)
+    register_tooltip(
+        reset_button.ax,
+        "Restore the controls to the last saved YAML values.",
+    )
+
+    tooltip = fig.text(
+        0,
+        0,
+        "",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        bbox=dict(boxstyle="round", facecolor="#fff9c4", edgecolor="#fdd835", alpha=0.9),
+        visible=False,
+        zorder=10,
+    )
+    active_tip_ax: Optional[Any] = None
+
+    def update_tooltip_position(event):
+        fig_x, fig_y = fig.transFigure.inverted().transform((event.x, event.y))
+        fig_x = min(max(fig_x + 0.01, 0.0), 0.98)
+        fig_y = min(max(fig_y + 0.01, 0.0), 0.98)
+        tooltip.set_position((fig_x, fig_y))
+
+    def show_tooltip(ax_obj, event):
+        message = tooltip_texts.get(ax_obj)
+        if message is None:
+            return
+        if event.x is None or event.y is None:
+            return
+        update_tooltip_position(event)
+        tooltip.set_text(message)
+        tooltip.set_visible(True)
+
+    def on_motion(event):
+        nonlocal active_tip_ax
+        ax_under = event.inaxes
+        if ax_under in tooltip_texts:
+            if event.x is None or event.y is None:
+                return
+            active_tip_ax = ax_under
+            show_tooltip(ax_under, event)
+            fig.canvas.draw_idle()
+        elif active_tip_ax is not None:
+            tooltip.set_visible(False)
+            active_tip_ax = None
+            fig.canvas.draw_idle()
+
+    def on_axes_enter(event):
+        nonlocal active_tip_ax
+        ax_under = event.inaxes
+        if ax_under in tooltip_texts and event.x is not None and event.y is not None:
+            active_tip_ax = ax_under
+            show_tooltip(ax_under, event)
+            fig.canvas.draw_idle()
+
+    def on_axes_leave(event):
+        nonlocal active_tip_ax
+        if active_tip_ax is not None:
+            tooltip.set_visible(False)
+            active_tip_ax = None
+            fig.canvas.draw_idle()
+
+    fig.canvas.mpl_connect("motion_notify_event", on_motion)
+    fig.canvas.mpl_connect("axes_enter_event", on_axes_enter)
+    fig.canvas.mpl_connect("axes_leave_event", on_axes_leave)
 
     plt.show()
 
@@ -1155,10 +1492,17 @@ def plot_interactive(
 # ---------------------------------------------------------------------
 
 def main():
-    default_dir = Path.cwd()
-    fit_dir = prompt_fit_directory(default_dir)
-    profile_path = fit_dir / "profile.yaml"
+    profile_path = Path.cwd() / "profile.yaml"
     profile, profile_yaml_data = get_profile(profile_path)
+
+    fallback_dir = Path.cwd()
+    fit_dir, profile, profile_yaml_data = ensure_fit_directory(
+        profile,
+        profile_yaml_data,
+        profile_path,
+        fallback_dir,
+    )
+
     fit_path = choose_fit_in_folder(
         fit_dir,
         max_files=profile.get("recent_fit_files", 5),
