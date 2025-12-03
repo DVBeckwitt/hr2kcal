@@ -3,10 +3,12 @@
 #   pip install numpy fitparse matplotlib pyyaml
 #
 # Usage:
-#   - Put this script and profile.yaml in the same folder as your .fit files
+#   - Put this script and profile.yaml in the same folder as your .fit files,
+#     or be ready to point the script at the folder containing them.
 #   - Run: python hr_interactive.py
-#   - It will list the newest .fit files (count from YAML), ask which to load,
-#     copy (minute,HR) CSV to clipboard, and open an interactive plot.
+#   - It will ask which folder to scan, list the newest .fit files (count from
+#     YAML), ask which to load, copy (minute,HR) CSV to clipboard, and open an
+#     interactive plot.
 
 from pathlib import Path
 from datetime import datetime
@@ -101,6 +103,29 @@ def choose_fit_in_folder(
             return matches[0]
 
         print("Filename not found. Use exact name, for example crossfit.fit.")
+
+
+def prompt_fit_directory(default_dir: Optional[Path] = None) -> Path:
+    """Ask the user which folder to scan for .fit files."""
+    if default_dir is None:
+        default_dir = Path.cwd()
+
+    while True:
+        user_input = input(
+            f"Folder containing .fit files (leave blank for {default_dir}): "
+        ).strip()
+
+        if user_input == "":
+            candidate = default_dir
+        else:
+            candidate = Path(user_input).expanduser()
+            if not candidate.is_absolute():
+                candidate = (default_dir / candidate).resolve()
+
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+        print("Directory does not exist. Please enter a valid folder path.")
 
 
 def copy_csv_to_clipboard(minutes, hr_vals):
@@ -888,8 +913,10 @@ def plot_interactive(
 def main():
     profile = get_profile()
 
+    default_dir = Path.cwd()
+    fit_dir = prompt_fit_directory(default_dir)
     fit_path = choose_fit_in_folder(
-        Path.cwd(),
+        fit_dir,
         max_files=profile.get("recent_fit_files", 5),
     )
     print(f"Using FIT file: {fit_path}")

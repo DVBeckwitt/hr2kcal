@@ -23,8 +23,7 @@ hr-energy-lab/
 ├── requirements.txt         # Runtime dependencies for quick installs
 ├── README.md                # This document
 ├── LICENSE                  # MIT License
-├── scripts/
-│   └── run.bat              # Windows helper that runs the module
+├── run.bat                  # Windows helper that runs the module
 ├── examples/
 │   └── profile.example.yaml # Sample profile configuration
 └── src/hr_energy_lab/
@@ -142,14 +141,14 @@ pip install -r requirements.txt
 
 1. Place your `.fit` files in a folder together with a `profile.yaml`.
 2. Copy and edit `examples/profile.example.yaml` with your details.
-3. From that folder, run:
+3. From any folder, run:
 
    ```bash
    python -m hr_energy_lab.hr_interactive
    # or after installation
    hr-energy-lab
    ```
-4. The script lists the newest `.fit` files, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
+4. When prompted, point the script at the folder containing your `.fit` files. It lists the newest files there, parses HR vs time, chooses a smoothing window, computes HR stats and calories with uncertainty, copies CSV (Windows), and opens the interactive plot.
 
 ---
 
