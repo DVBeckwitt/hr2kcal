@@ -98,32 +98,12 @@ If `zones` is omitted but `hr_rest` and `hr_max` are given, a default 5 zone HRR
 
 ### Calorie estimation and uncertainty
 
-Core function: `estimate_calories_kcal_strict(minutes, hr_mean, hr_sigma_local, sex, age, weight_kg, hr_error_bpm)`
 
-1. Builds midpoint values between time samples and combines:
-   * local HR noise from smoothing, and
-   * a device floor `hr_error_bpm`
-   into a single 1σ HR uncertainty at each midpoint.
-2. Applies a Keytel style HR-to-kcal model to each midpoint to obtain a per minute calorie rate, clips negative rates to zero, and integrates over time.
-3. Propagates HR uncertainty through the model via the derivative of the calorie rate with respect to HR, giving a strict 1σ uncertainty on total calories. An optional fractional model error can be combined in quadrature.
-
-Console output looks like:
-
-```text
-Calories (strict propagation + floor): E = 650 ± 40 kcal (hr_error_bpm=3.0)
-```
-
-### Interactive plotting
-
-`plot_interactive(...)` opens an interactive matplotlib window with:
-
-* HR vs time (raw, smoothed, and ±1σ band)
-* Colored background bands for HR zones
-* A stats box with basic HR metrics and calories ±1σ
-* Zone labels that update when you zoom
-* Hover tooltips and rectangle zoom controls, plus double click and right click zoom shortcuts
-
-**Figure 1 placeholder: interactive overview**
+The screenshot highlights the raw and smoothed HR traces, the 1σ uncertainty band, colored zone backgrounds, and the right-hand
+ zone axis alongside the primary stats box.
+The cropped panel view shows editable fields (age, weight, `hr_rest`, `hr_max`, `hr_error_bpm`), any model toggles, and the
+ Apply/Reset buttons, illustrating how live edits update the plot and calorie summary.
+![Figure 3: Zoomed zone labels and hover details.](docs/fig3_zoom_zones.png)
 
 Add a screenshot similar to:
 
