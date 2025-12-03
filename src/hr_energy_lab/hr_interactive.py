@@ -367,9 +367,10 @@ def prompt_user_profile_fallback() -> Dict[str, Any]:
     return profile
 
 
-def get_profile() -> Dict[str, Any]:
-    """Load profile from profile.yaml if possible, otherwise fallback."""
-    profile_path = Path.cwd() / "profile.yaml"
+def get_profile(profile_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Load profile from profile.yaml in the given folder, otherwise fallback."""
+    base = profile_dir if profile_dir is not None else Path.cwd()
+    profile_path = base / "profile.yaml"
     try:
         return load_profile_from_yaml(profile_path)
     except Exception as e:
@@ -1084,10 +1085,9 @@ def plot_interactive(
 # ---------------------------------------------------------------------
 
 def main():
-    profile = get_profile()
-
     default_dir = Path.cwd()
     fit_dir = prompt_fit_directory(default_dir)
+    profile = get_profile(fit_dir)
     fit_path = choose_fit_in_folder(
         fit_dir,
         max_files=profile.get("recent_fit_files", 5),
