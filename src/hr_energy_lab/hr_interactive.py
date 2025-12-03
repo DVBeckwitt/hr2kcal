@@ -11,6 +11,7 @@
 #     interactive plot.
 
 from pathlib import Path
+import copy
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any
 import subprocess
@@ -247,7 +248,7 @@ def build_zones_from_config(
     return zones
 
 
-def load_profile_from_yaml(path: Path) -> Dict[str, Any]:
+def load_profile_from_yaml(path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Load profile + modeling config from YAML into a dict:
 
@@ -339,7 +340,7 @@ def load_profile_from_yaml(path: Path) -> Dict[str, Any]:
         "calories_include_model_uncertainty": include_model_unc,
         "recent_fit_files": recent_fit_files,
     }
-    return profile
+    return profile, data
 
 
 def prompt_user_profile_fallback() -> Dict[str, Any]:
@@ -367,15 +368,57 @@ def prompt_user_profile_fallback() -> Dict[str, Any]:
     return profile
 
 
-def get_profile(profile_dir: Optional[Path] = None) -> Dict[str, Any]:
-    """Load profile from profile.yaml in the given folder, otherwise fallback."""
-    base = profile_dir if profile_dir is not None else Path.cwd()
-    profile_path = base / "profile.yaml"
+def get_profile(profile_path: Optional[Path] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Load profile + raw YAML from the given path; otherwise use fallback."""
+
+    resolved_path = profile_path if profile_path is not None else Path.cwd() / "profile.yaml"
     try:
-        return load_profile_from_yaml(profile_path)
+        profile, yaml_data = load_profile_from_yaml(resolved_path)
+        return profile, yaml_data
     except Exception as e:
         print(f"Could not load profile.yaml ({e}).")
-        return prompt_user_profile_fallback()
+        return prompt_user_profile_fallback(), {}
+
+
+def build_profile_yaml(profile_state: Dict[str, Any], base_yaml: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge in-session profile tweaks into a YAML-ready mapping."""
+
+    data: Dict[str, Any] = copy.deepcopy(base_yaml) if isinstance(base_yaml, dict) else {}
+
+    data["name"] = profile_state.get("name")
+    data["sex"] = str(profile_state.get("sex", "")).upper()
+    data["age"] = int(profile_state.get("age")) if profile_state.get("age") is not None else None
+    data["weight"] = float(profile_state.get("weight_kg", 0.0))
+    data["weight_unit"] = "kg"
+
+    if profile_state.get("height_cm") is not None:
+        data["height_cm"] = profile_state.get("height_cm")
+
+    data["hr_rest"] = profile_state.get("hr_rest")
+    data["hr_max"] = profile_state.get("hr_max")
+    data["hr_error_bpm"] = float(profile_state.get("hr_error_bpm", 3.0))
+
+    cal_cfg = data.get("calories", {}) or {}
+    cal_cfg["model_frac"] = float(profile_state.get("calories_model_frac", 0.2))
+    cal_cfg["include_model_uncertainty"] = bool(
+        profile_state.get("calories_include_model_uncertainty", True)
+    )
+    data["calories"] = cal_cfg
+
+    return data
+
+
+def save_profile_to_yaml(
+    profile_state: Dict[str, Any], profile_path: Path, base_yaml: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Persist the profile to profile.yaml and return the saved YAML mapping."""
+
+    yaml_data = build_profile_yaml(profile_state, base_yaml)
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    with profile_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(yaml_data, f, sort_keys=False)
+    print(f"Saved profile to {profile_path}")
+    return yaml_data
 
 
 # ---------------------------------------------------------------------
@@ -629,6 +672,8 @@ def plot_interactive(
     zones,
     zone_stats,
     profile: Dict[str, Any],
+    profile_yaml_path: Path,
+    profile_yaml_data: Dict[str, Any],
 ):
     if not minutes:
         print("No valid HR records found.")
@@ -656,6 +701,8 @@ def plot_interactive(
     # Keep mutable state for profile-driven updates
     profile_state = dict(profile)
     baseline_profile = dict(profile)
+    profile_yaml_path = Path(profile_yaml_path)
+    profile_yaml_data_current = copy.deepcopy(profile_yaml_data)
     zones_current = list(zones)
     zone_stats_current = list(zone_stats)
     kcal_estimate_current = kcal_estimate
@@ -996,6 +1043,22 @@ def plot_interactive(
             return None
         return caster(cleaned)
 
+    def collect_profile_from_fields() -> Dict[str, Any]:
+        updated = dict(profile_state)
+        for label, key, allow_none, caster in field_specs:
+            text_val = text_boxes[key].text
+            parsed = parse_field(text_val, allow_none, caster)
+            if key == "sex" and parsed not in ("M", "F"):
+                raise ValueError("Sex must be M or F")
+            updated[key] = parsed
+
+        updated["calories_include_model_uncertainty"] = include_unc_checkbox.get_status()[0]
+
+        if updated.get("age") is None or updated.get("weight_kg") is None:
+            raise ValueError("Age and weight are required.")
+
+        return updated
+
     def apply_profile_changes(new_profile: Dict[str, Any]):
         nonlocal zones_current, zone_stats_current, kcal_estimate_current, kcal_sigma_current
 
@@ -1032,24 +1095,26 @@ def plot_interactive(
     def on_apply(event):
         nonlocal profile_state
         try:
-            updated = dict(profile_state)
-            for label, key, allow_none, caster in field_specs:
-                text_val = text_boxes[key].text
-                parsed = parse_field(text_val, allow_none, caster)
-                if key == "sex" and parsed not in ("M", "F"):
-                    raise ValueError("Sex must be M or F")
-                updated[key] = parsed
-
-            updated["calories_include_model_uncertainty"] = include_unc_checkbox.get_status()[0]
-
-            if updated.get("age") is None or updated.get("weight_kg") is None:
-                raise ValueError("Age and weight are required.")
-
+            updated = collect_profile_from_fields()
             apply_profile_changes(updated)
             profile_state = updated
             status_text.set_text("Profile tweaks applied to plot.")
         except Exception as exc:
             status_text.set_text(f"Could not update: {exc}")
+        fig.canvas.draw_idle()
+
+    def on_save(event):
+        nonlocal profile_state, baseline_profile, profile_yaml_data_current
+        try:
+            updated = collect_profile_from_fields()
+            apply_profile_changes(updated)
+            profile_state = updated
+            saved_yaml = save_profile_to_yaml(updated, profile_yaml_path, profile_yaml_data_current)
+            baseline_profile = dict(updated)
+            profile_yaml_data_current = saved_yaml
+            status_text.set_text("Profile saved to profile.yaml.")
+        except Exception as exc:
+            status_text.set_text(f"Could not save profile: {exc}")
         fig.canvas.draw_idle()
 
     def on_reset(event):
@@ -1066,6 +1131,11 @@ def plot_interactive(
             include_unc_checkbox.set_active(0)
         apply_profile_changes(profile_state)
         status_text.set_text("Reset to YAML values for this session.")
+
+    save_ax = controls_ax.inset_axes([0.58, 0.05, 0.12, 0.14])
+    save_button = Button(save_ax, "Save to file")
+    save_button.label.set_fontsize(9)
+    save_button.on_clicked(on_save)
 
     apply_ax = controls_ax.inset_axes([0.72, 0.05, 0.12, 0.14])
     apply_button = Button(apply_ax, "Apply changes")
@@ -1087,7 +1157,8 @@ def plot_interactive(
 def main():
     default_dir = Path.cwd()
     fit_dir = prompt_fit_directory(default_dir)
-    profile = get_profile(fit_dir)
+    profile_path = fit_dir / "profile.yaml"
+    profile, profile_yaml_data = get_profile(profile_path)
     fit_path = choose_fit_in_folder(
         fit_dir,
         max_files=profile.get("recent_fit_files", 5),
@@ -1142,6 +1213,8 @@ def main():
         zones,
         zone_stats,
         profile,
+        profile_path,
+        profile_yaml_data,
     )
 
 
