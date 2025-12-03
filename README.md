@@ -54,31 +54,8 @@ you also get a console command called `hr-energy-lab` that launches the interact
 * Loads `.fit` files with `fitparse` and extracts timestamps and heart rate.
 * Converts timestamps to minutes from start:
   \[
-  t_i = rac{t_i - t_0}{60\ 	ext{s}}
-  \]
-* Currently only `.fit` is supported. TCX, GPX, CSV, or API inputs would need extra parsers.
-
-### HR smoothing and local noise estimate
-
-Function: `compute_smoothed_auto(minutes, hr_vals, target_durations_min=None)`
-
-* Evaluates several candidate window durations (default 0.1 to 2.0 min).
-* For each window size, uses leave-one-out cross validation to minimize mean squared error between each point and the mean of its neighbors.
-* Returns:
-  * smoothed HR series
-  * local per-sample standard deviation (HR noise estimate)
-  * chosen window size
-  * effective smoothing duration in minutes
-
-This gives a data-driven smoothing choice plus a local HR noise estimate for uncertainty propagation.
-
-### HR zones
-
-Zones are constructed in `build_zones_from_config(zones_cfg, hr_rest, hr_max)`.
-
-zone axis alongside the primary stats box.
-
-A zoomed view shows the colored zone shading and hover tooltips for precise inspection.
+  t_i = Figure 1 shows the full interactive view with the smoothed HR trace, 1σ band, zone shading, and stats box.
+Figure 2 highlights the profile panel fields, Apply/Reset controls, and how edits update the plot and calorie summary.
 ![Figure 3: Zoomed zone labels and hover details.](docs/fig3_zoom_zones.png)
 Add a screenshot similar to:
 
