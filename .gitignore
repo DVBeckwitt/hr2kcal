@@ -6,3 +6,6 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+# Ignore FIT files except the sample
+*.fit
+!fit_files/sample.fit
